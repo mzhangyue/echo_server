@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 
 #include <arpa/inet.h>
+// chat server test
 
 #define PORT "3490" // the port client will be connecting to 
 #define BUFFER_SIZE 1024 // max number of bytes can send and receive

@@ -16,11 +16,12 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <pthread.h>
+#include "thpool.h"
 
 #define PORT "3490"  // the port users will be connecting to
 
 #define BACKLOG 10	 // how many pending connections queue will hold
-#define MAXCONNECT 5 // max number of concurrent connections allowed
+#define MAXCONNECT 2 // max number of concurrent connections allowed
 #define BUFFER_SIZE 1024 // size of buffer
 
 // get sockaddr, IPv4 or IPv6:
@@ -34,7 +35,8 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 // echo function for each thread
-void *echo(void *newfd_ptr) {
+void echo(void *newfd_ptr) {
+	printf("starting echo\n");
 	int new_fd = *(int*) newfd_ptr;
 	// create buffer to receive incoming msgs
 	char buf[BUFFER_SIZE];
@@ -54,8 +56,8 @@ void *echo(void *newfd_ptr) {
 			perror("send");
 		}
 	}
+	printf("exiting thread\n");
 	pthread_exit(NULL);
-	return NULL;
 }
 
 int main(void)
@@ -64,9 +66,9 @@ int main(void)
 	struct addrinfo hints, *servinfo, *p; // used for prepping sockaddr structs
 	struct sockaddr_storage their_addr; // connector's address information
 	socklen_t sin_size;
-	pthread_t threads[MAXCONNECT]; // array of thread ids
 	int rc; // return code
-	int t = 0; // next index of threads to assign
+	int numConn; // current number of connections
+	threadpool thr_pool; // thread pool
 	int yes=1;
 	char s[INET6_ADDRSTRLEN]; // used to contain IP address
 	int rv; // return value for error checking
@@ -121,8 +123,14 @@ int main(void)
 
 	printf("server: waiting for connections...\n");
 
+	if (!(thr_pool = thpool_init(MAXCONNECT))) {  // initialize thread pool
+		printf("error creating thread pool");
+		exit(1);
+	}
+
 	while(1) {  // main accept() loop
 		sin_size = sizeof their_addr;
+		printf("num current connections: %d\n", thpool_num_threads_working(thr_pool));
 		// put incoming connection info into their_addr
 		new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
 		if (new_fd == -1) {
@@ -136,13 +144,17 @@ int main(void)
 		printf("server: got connection from %s\n", s);
 
 		// create new thread for the connection
-		rc = pthread_create(&threads[t], NULL, echo, &new_fd);
-		if (rc) {
-			printf("ERROR; return code from pthread_create() is %d\n", rc);
+		if (thpool_num_threads_working(thr_pool) > MAXCONNECT) {
+			printf("max connections reached, adding to queue\n");
+		}
+		rc = thpool_add_work(thr_pool, &echo, &new_fd);
+		printf("adding work to pool\n");
+		if (rc == -1) {
+			printf("ERROR; adding work to thread pool");
 			exit(-1);
 		}
-		t++;
+		sleep(1);
 	}
-	pthread_exit(NULL); // wait for threads
+	thpool_destroy(thr_pool); // destroy thread pool
 	return 0;
 }
